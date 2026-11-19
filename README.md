@@ -9,11 +9,11 @@ generacion de facturas.
 - Inicio de sesion y creacion de usuarios.
 - **Registro de bovinos** mediante formulario con hoja tecnica basica.
 - **Consulta de animales** con busqueda por nombre/identificacion y filtros por
-  categorias: sexo, raza, origen, proposito, estado y color.
+  categorias: sexo, raza, origen, proposito, estado, color y terreno.
 - **Hoja tecnica** del animal en una ventana aparte (doble clic en la tabla o
   boton **Ver hoja tecnica**; incluye edad calculada).
 - **Generacion de factura** en formato YAML con granja, comprador, fecha,
-  vacas y precio por libra. La factura se abre en una ventana propia y permite
+  animales y precio por kilo. La factura se abre en una ventana propia y permite
   abrir el archivo con el Bloc de notas.
 - **Acerca de** en una ventana propia, con la informacion del proyecto sobre la
   misma imagen de fondo.
@@ -27,7 +27,7 @@ generacion de facturas.
 pip install customtkinter Pillow PyYAML
 ```
 
-Probado con Python 3.14, CustomTkinter 6.0.0, Pillow 12.3.0 y PyYAML 6.0.3.
+Probado con Python 3.15, CustomTkinter 6.0.0, Pillow 12.3.0 y PyYAML 6.0.3.
 
 ## Ejecucion
 
@@ -97,9 +97,9 @@ La edad se calcula automaticamente a partir de la fecha de nacimiento.
 ## Cuentas y contraseñas
 
 - **Archivo real:** `Cuentas.json`, en la raiz de la carpeta del proyecto.
-- **No se versiona en Git:** esta incluido en `.gitignore` para no exponer
-  contraseñas en el repositorio (ni en su historial).
-- **Plantilla versionada:** `Cuentas.ejemplo.json` muestra el formato esperado:
+- **Incluido en el repositorio:** por decision del usuario, `Cuentas.json` se subio
+  a GitHub junto al resto de datos; contiene contraseñas en texto plano.
+- **Plantilla de referencia:** `Cuentas.ejemplo.json` muestra el formato esperado:
 
 ```json
 {
@@ -111,7 +111,7 @@ La edad se calcula automaticamente a partir de la fecha de nacimiento.
 
 **Desde la carpeta (recomendado):**
 
-1. Abre `C:\Users\nicol\OneDrive\Desktop\Proyecto de progra\Proyecto programacion II\Cuentas.json`.
+1. Abre `C:\Users\jhona\Documents\Proyecto-programacion-II\Cuentas.json`.
 2. Puedes verlo con el Bloc de notas o VS Code.
 3. Tambien puedes abrirlo con:
 
@@ -121,8 +121,13 @@ notepad "Cuentas.json"
 
 **Desde Git:**
 
-El archivo real no esta en Git por seguridad, asi que `git show` no lo mostrara.
-En el repositorio solo esta la plantilla:
+El archivo real tambien esta versionado, asi que puedes verlo con:
+
+```
+git show HEAD:Cuentas.json
+```
+
+La plantilla sigue disponible con:
 
 ```
 git show HEAD:Cuentas.ejemplo.json
@@ -136,4 +141,5 @@ guardar **hashes** de las contraseñas (no texto plano).
 - Las contraseñas se guardan actualmente en texto plano en `Cuentas.json`.
   Se recomienda migrar a hashes (por ejemplo, `hashlib.pbkdf2_hmac`) en una
   siguiente iteracion.
-- El archivo `Cuentas.json` no debe subirse a GitHub.
+- El archivo `Cuentas.json` fue subido a GitHub por decision explicita del usuario;
+  se recomienda revocar esas contraseñas y no repetirlo en repositorios publicos.
