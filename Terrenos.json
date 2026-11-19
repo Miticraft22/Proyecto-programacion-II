@@ -1,0 +1,11 @@
+{
+    "terrenos": [
+        {
+            "id": 1,
+            "usuario": "miti",
+            "nombre": "caño tigre",
+            "hectareas": 7.0,
+            "animales": []
+        }
+    ]
+}

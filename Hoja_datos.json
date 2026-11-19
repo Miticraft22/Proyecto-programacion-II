@@ -1,0 +1,54 @@
+{
+    "animales": [
+        {
+            "identificacion": "2332334",
+            "nombre": "rosa",
+            "raza": "Normando",
+            "sexo": "Hembra",
+            "fecha_nacimiento": "2000-05-14",
+            "peso": 120.0,
+            "color": "marron",
+            "proposito": "Doble propósito",
+            "origen": "Criado en la granja",
+            "procedencia": "pues la mia",
+            "fecha_ingreso": "2026-11-13",
+            "estado": "Activo",
+            "observaciones": "la vaca es arisca, tener cuidado",
+            "id": 1
+        },
+        {
+            "identificacion": "1213",
+            "nombre": "camela",
+            "raza": "Mestizo",
+            "sexo": "Hembra",
+            "fecha_nacimiento": "2024-12-01",
+            "peso": 450.0,
+            "color": "blanco negro",
+            "proposito": "Doble propósito",
+            "origen": "Criado en la granja",
+            "procedencia": "Granja propia",
+            "fecha_ingreso": "2026-11-19",
+            "estado": "Activo",
+            "observaciones": "",
+            "id": 2,
+            "usuario": "miti"
+        },
+        {
+            "identificacion": "1231",
+            "nombre": "luna",
+            "raza": "Mestizo",
+            "sexo": "Hembra",
+            "fecha_nacimiento": "1904-04-20",
+            "peso": 300.0,
+            "color": "azul",
+            "proposito": "Doble propósito",
+            "origen": "Criado en la granja",
+            "procedencia": "Granja propia",
+            "fecha_ingreso": "2026-11-19",
+            "estado": "Activo",
+            "observaciones": "",
+            "id": 3,
+            "usuario": "miti"
+        }
+    ]
+}

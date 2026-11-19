@@ -22,8 +22,10 @@ ctk.CTkToplevel._deactivate_windows_window_header_manipulation = True
 BASE_DIR = Path(__file__).resolve().parent
 RUTA_CUENTAS = BASE_DIR / "Cuentas.json"
 RUTA_DATOS = BASE_DIR / "Hoja_datos.json"
+RUTA_TERRENOS = BASE_DIR / "Terrenos.json"
 RUTA_FACTURA = BASE_DIR / "nuevo.txt"
 RUTA_IMAGEN = BASE_DIR / "IMAGEN DE APLICACION.jpg"
+RUTA_IMAGENES = BASE_DIR / "imagenes"
 
 # Paleta reducida: escala clara de fondos y un solo color de acción.
 COLOR_FONDO = "#eef7fa"
@@ -44,7 +46,7 @@ RAZAS = ["Holstein", "Jersey", "Brahman", "Angus", "Hereford", "Nelore", "Gyr", 
 PROPOSITOS = ["Leche", "Carne", "Doble propósito"]
 ORIGENES = ["Criado en la granja", "Comprado", "Donado", "Otro"]
 ESTADOS = ["Activo", "Vendido", "Muerto"]
-CAMPOS_FILTRO = [("sexo", "Sexo"), ("raza", "Raza"), ("origen", "Origen"), ("proposito", "Propósito"), ("estado", "Estado"), ("color", "Color")]
+CAMPOS_FILTRO = [("sexo", "Sexo"), ("raza", "Raza"), ("origen", "Origen"), ("proposito", "Propósito"), ("estado", "Estado"), ("color", "Color"), ("terreno", "Terreno")]
 
 _imagen_base = None
 
@@ -93,6 +95,30 @@ def cargar_imagen():
         except Exception:
             _imagen_base = False
     return _imagen_base or None
+
+_cache_imagenes_menu = {}
+
+def cargar_imagen_menu(nombres, tam=(240, 136)):
+    if isinstance(nombres, str):
+        nombres = (nombres,)
+    nombres = tuple(nombres)
+    clave = (nombres, tam)
+    if clave in _cache_imagenes_menu:
+        return _cache_imagenes_menu[clave]
+    foto = None
+    for nombre in nombres:
+        ruta = RUTA_IMAGENES / nombre
+        if not ruta.is_file():
+            continue
+        try:
+            with Image.open(ruta) as archivo:
+                imagen = ImageOps.fit(archivo.convert("RGBA"), tam, Image.Resampling.LANCZOS)
+            foto = ctk.CTkImage(light_image=imagen, dark_image=imagen, size=tam)
+            break
+        except Exception:
+            continue
+    _cache_imagenes_menu[clave] = foto
+    return foto
 
 def poner_fondo(ventana):
     """Pone la imagen de fondo y la ajusta cuando la ventana cambia de tamaño."""
@@ -227,6 +253,65 @@ def cargar_animales():
 def guardar_animales(animales):
     guardar_json(RUTA_DATOS, {"animales": animales})
 
+def es_de_usuario(registro, usuario):
+    return str(registro.get("usuario") or "").casefold() == str(usuario or "").casefold()
+
+def cargar_animales_usuario(usuario):
+    return [animal for animal in cargar_animales() if es_de_usuario(animal, usuario)]
+
+def guardar_animales_usuario(animales, usuario):
+    otros = [animal for animal in cargar_animales() if not es_de_usuario(animal, usuario)]
+    guardar_animales(otros + list(animales))
+
+def cargar_terrenos():
+    datos = cargar_json(RUTA_TERRENOS, {"terrenos": []})
+    if isinstance(datos, dict):
+        terrenos = datos.get("terrenos", [])
+    elif isinstance(datos, list):
+        terrenos = datos
+    else:
+        return []
+    if not isinstance(terrenos, list):
+        return []
+    return [terreno for terreno in terrenos if isinstance(terreno, dict)]
+
+def guardar_terrenos(terrenos):
+    guardar_json(RUTA_TERRENOS, {"terrenos": terrenos})
+
+def cargar_terrenos_usuario(usuario):
+    return [terreno for terreno in cargar_terrenos() if es_de_usuario(terreno, usuario)]
+
+def guardar_terrenos_usuario(terrenos, usuario):
+    otros = [terreno for terreno in cargar_terrenos() if not es_de_usuario(terreno, usuario)]
+    guardar_terrenos(otros + list(terrenos))
+
+def ids_en_terrenos(terrenos, excluir=None):
+    ids = set()
+    for terreno in terrenos:
+        if excluir is not None and terreno.get("id") == excluir:
+            continue
+        for valor in terreno.get("animales") or []:
+            if isinstance(valor, (int, str)):
+                try:
+                    ids.add(int(valor))
+                except ValueError:
+                    pass
+    return ids
+
+def nombres_terreno_por_animal(usuario):
+    nombres = {}
+    for terreno in cargar_terrenos_usuario(usuario):
+        nombre = str(terreno.get("nombre") or "").strip()
+        if not nombre:
+            continue
+        for valor in terreno.get("animales") or []:
+            try:
+                ident = int(valor)
+            except (TypeError, ValueError):
+                continue
+            nombres[ident] = nombre
+    return nombres
+
 def validar_fecha(texto):
     try:
         return datetime.strptime(str(texto).strip(), "%Y-%m-%d").date()
@@ -268,8 +353,54 @@ def formatear_peso(peso):
         return "—"
     return f"{valor:.1f}"
 
-def filtrar_animales(animales, filtros, texto=""):
+def peso_valido(peso):
+    try:
+        valor = float(peso)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(valor) or valor <= 0:
+        return None
+    return valor
+
+def calcular_totales(animales, precio):
+    try:
+        valor = float(precio)
+    except (TypeError, ValueError):
+        valor = 0.0
+    if not math.isfinite(valor) or valor < 0:
+        valor = 0.0
+    peso_kg = 0.0
+    validos = 0
+    for animal in animales or []:
+        if not isinstance(animal, dict):
+            continue
+        peso = peso_valido(animal.get("peso"))
+        if peso is None:
+            continue
+        peso_kg += peso
+        validos += 1
+    return {"vacas": len(animales or []), "validos": validos, "peso_kg": peso_kg, "precio": valor, "total": peso_kg * valor}
+
+def formatear_numero(valor, decimales=1):
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return "—"
+    if not math.isfinite(numero):
+        return "—"
+    texto = f"{numero:,.{decimales}f}"
+    if "." not in texto:
+        return texto.replace(",", ".")
+    entero, resto = texto.split(".")
+    return f"{entero.replace(',', '.')},{resto}"
+
+def formatear_moneda(valor):
+    texto = formatear_numero(valor, 2)
+    return "—" if texto == "—" else f"$ {texto}"
+
+def filtrar_animales(animales, filtros, texto="", nombres_terreno=None):
     texto = str(texto).strip().lower()
+    nombres_terreno = nombres_terreno or {}
     resultado = []
 
     for animal in animales:
@@ -279,14 +410,19 @@ def filtrar_animales(animales, filtros, texto=""):
         if texto:
             nombre = str(animal.get("nombre", "")).lower()
             identificacion = str(animal.get("identificacion", "")).lower()
-            if texto not in nombre and texto not in identificacion:
+            terreno = str(nombres_terreno.get(animal.get("id"), "") or "").lower()
+            if texto not in nombre and texto not in identificacion and texto not in terreno:
                 continue
 
         coincide = True
         for clave, valor in filtros.items():
             if valor is None:
                 continue
-            if str(animal.get(clave) or "").strip().lower() != str(valor).strip().lower():
+            if clave == "terreno":
+                actual = str(nombres_terreno.get(animal.get("id"), "") or "").strip().lower()
+            else:
+                actual = str(animal.get(clave) or "").strip().lower()
+            if actual != str(valor).strip().lower():
                 coincide = False
                 break
 
@@ -295,12 +431,15 @@ def filtrar_animales(animales, filtros, texto=""):
 
     return resultado
 
-def valores_categoria(animales, categoria):
+def valores_categoria(animales, categoria, nombres_terreno=None):
     valores = set()
     for animal in animales:
         if not isinstance(animal, dict):
             continue
-        valor = str(animal.get(categoria) or "").strip()
+        if categoria == "terreno":
+            valor = str((nombres_terreno or {}).get(animal.get("id"), "") or "").strip()
+        else:
+            valor = str(animal.get(categoria) or "").strip()
         if valor:
             valores.add(valor)
     return sorted(valores, key=str.lower)
@@ -337,7 +476,7 @@ def formatear_hoja(animal):
 # --- Inicio de sesión ---
 def crear_ventana_login():
     root = ctk.CTk()
-    root.title("Métodos Campesinos")
+    root.title("MINIGAN")
     ajustar_ventana(root, 1180, 760)
     poner_fondo(root)
 
@@ -345,7 +484,7 @@ def crear_ventana_login():
     panel.place(relx=0.5, rely=0.5, anchor="center")
     fijar_ancho(panel, 540)
 
-    etiqueta(panel, "Métodos Campesinos", 28, COLOR_TEXTO, negrita=True).pack(pady=(52, 4))
+    etiqueta(panel, "MINIGAN", 28, COLOR_TEXTO, negrita=True).pack(pady=(52, 4))
     etiqueta(panel, "Control de ganado", 14, COLOR_SECUNDARIO).pack(pady=(0, 38))
 
     etiqueta(panel, "Usuario", 13, COLOR_SECUNDARIO, anchor="w").pack(fill="x", padx=60)
@@ -469,7 +608,7 @@ def abrir_menu_principal(root, usuario):
     if ventana_abierta(root, "ventana_principal"):
         return
 
-    principal = nueva_ventana(root, "Menú principal", 1360, 820, fondo=False)
+    principal = nueva_ventana(root, "Minigan", 1360, 820, fondo=False)
     root.withdraw()
 
     lienzo = tk.Canvas(principal, highlightthickness=0, bd=0, bg=COLOR_FONDO)
@@ -482,19 +621,42 @@ def abrir_menu_principal(root, usuario):
         cerrar_sesion(root, principal)
 
     boton_cerrar = boton(principal, "Cerrar sesión", cerrar, "suave", ancho=140, alto=36)
+    boton_acerca = boton(principal, "Acerca de", lambda: abrir_acerca(principal), "suave", ancho=120, alto=30, tam=12)
+    boton_acerca.place(relx=0.5, rely=1.0, anchor="s", y=-50)
 
-    botones = [
-        boton(principal, "Registrar animal", lambda: abrir_formulario_animal(principal), "primario", ancho=220, alto=108, tam=15),
-        boton(principal, "Consultar animales", lambda: abrir_catalogo(principal), "suave", ancho=220, alto=108, tam=15),
-        boton(principal, "Generar factura", lambda: abrir_facturacion(principal), "suave", ancho=220, alto=108, tam=15),
-        boton(principal, "Acerca de", lambda: abrir_acerca(principal), "suave", ancho=220, alto=108, tam=15),
+    opciones = [
+        ("Registrar animal", lambda: abrir_formulario_animal(principal, usuario), "suave", "Registra un bovino y completa su hoja técnica con datos, peso y fechas.", ("Registrar animal.png", "Registrar animal.jpg", "registrar animal.jpg", "menu_registrar.png")),
+        ("Consultar animales", lambda: abrir_catalogo(principal, usuario), "suave", "Busca y filtra animales por arete, raza, estado o terreno.", ("Consultar animales.png", "Consultar animales.jpg", "consultar animales.jpg", "menu_consultar.png")),
+        ("Terrenos", lambda: abrir_terrenos(principal, usuario), "suave", "Crea y administra terrenos, asigna animales y controla sus hectáreas.", ("Terrenos.png", "Terrenos.jpg", "terrenos.jpg", "menu_terrenos.png")),
+        ("Generar factura", lambda: abrir_facturacion(principal, usuario), "suave", "Elige los animales que se venden y calcula el total según su peso.", ("Generar factura.png", "Generar factura.jpg", "generar factura.jpg", "menu_factura.png")),
     ]
+
+    ancho_tarjeta = 300
+    alto_tarjeta = 350
+    tarjetas_menu = []
+    for texto, comando, estilo, descripcion, nombres_imagen in opciones:
+        contenedor = tarjeta(principal, width=ancho_tarjeta, height=alto_tarjeta)
+        contenedor.pack_propagate(False)
+        marco_imagen = ctk.CTkFrame(contenedor, fg_color="transparent", width=240, height=136)
+        marco_imagen.pack(padx=28, pady=(20, 22))
+        marco_imagen.pack_propagate(False)
+        foto = cargar_imagen_menu(nombres_imagen)
+        if foto is not None:
+            imagen_tarjeta = ctk.CTkLabel(marco_imagen, text="", image=foto)
+            imagen_tarjeta.image = foto
+            imagen_tarjeta.pack(expand=True)
+        else:
+            ctk.CTkLabel(marco_imagen, text="", width=240, height=136, fg_color=COLOR_SUAVE, corner_radius=12).pack(expand=True)
+        boton(contenedor, texto, comando, estilo, ancho=218, alto=50, tam=15).pack(padx=18, pady=(6, 8))
+        etiqueta(contenedor, descripcion, 14, COLOR_SECUNDARIO, justify="center", wraplength=240).pack(padx=28, pady=(10, 16))
+        tarjetas_menu.append(contenedor)
 
     def ubicar_botones():
         boton_cerrar.place(relx=1.0, x=-48, y=30, anchor="ne")
-        centro = (len(botones) - 1) / 2
-        for indice, widget in enumerate(botones):
-            widget.place(relx=0.5, rely=0.50, x=round((indice - centro) * 234), anchor="n")
+        centro = (len(tarjetas_menu) - 1) / 2
+        separacion = ancho_tarjeta + 28
+        for indice, widget in enumerate(tarjetas_menu):
+            widget.place(relx=0.5, rely=0.3, x=round((indice - centro) * separacion), anchor="n")
 
     def dibujar():
         estado["job"] = None
@@ -505,8 +667,7 @@ def abrir_menu_principal(root, usuario):
             alto = max(lienzo.winfo_height(), 360)
         except Exception:
             return
-        anterior_ancho, anterior_alto = estado["tam"]
-        if 0 < ancho <= anterior_ancho and 0 < alto <= anterior_alto:
+        if (ancho, alto) == estado["tam"]:
             return
         estado["tam"] = (ancho, alto)
         lienzo.delete("all")
@@ -519,10 +680,9 @@ def abrir_menu_principal(root, usuario):
 
         escala = ctk.ScalingTracker.get_widget_scaling(lienzo) or 1.0
         margen = round(48 * escala)
-        lienzo.create_text(margen, round(30 * escala), anchor="nw", text="Métodos Campesinos", font=(FUENTE, 16, "bold"), fill=COLOR_TEXTO)
         lienzo.create_text(ancho - margen - round(162 * escala), round(38 * escala), anchor="ne", text=f"Usuario: {usuario}", font=(FUENTE, 10), fill=COLOR_SECUNDARIO)
-        lienzo.create_text(ancho / 2, alto * 0.40, anchor="center", text="¿Qué deseas hacer?", font=(FUENTE, 20, "bold"), fill=COLOR_TEXTO)
-        lienzo.create_text(ancho / 2, alto * 0.40 + round(44 * escala), anchor="center", text="Selecciona una opción para continuar.", font=(FUENTE, 11), fill=COLOR_SECUNDARIO)
+        lienzo.create_text(ancho / 2, round(20 * escala), anchor="n", text="Minigan", font=(FUENTE, 44, "bold"), fill=COLOR_TEXTO)
+        lienzo.create_text(ancho / 2, round(90 * escala), anchor="n", text="Selecciona una opción", font=(FUENTE, 18), fill=COLOR_SECUNDARIO)
         ubicar_botones()
 
     def redimensionar(evento=None):
@@ -537,12 +697,13 @@ def abrir_menu_principal(root, usuario):
 
     lienzo.bind("<Configure>", redimensionar)
     principal.protocol("WM_DELETE_WINDOW", lambda: cerrar_sesion(root, principal))
+    principal.tarjetas_menu = tarjetas_menu
     root.ventana_principal = principal
     principal.focus_force()
     lienzo.after(30, dibujar)
 
 def cerrar_sesion(root, principal):
-    for atributo in ("ventana_catalogo", "ventana_registro_animal", "ventana_factura", "ventana_factura_vista", "ventana_acerca"):
+    for atributo in ("ventana_catalogo", "ventana_registro_animal", "ventana_terrenos", "ventana_factura", "ventana_factura_vista", "ventana_acerca"):
         ventana = getattr(principal, atributo, None)
         if ventana is not None:
             try:
@@ -568,7 +729,7 @@ def cerrar_sesion(root, principal):
         pass
 
 # --- Formulario de registro de bovinos ---
-def abrir_formulario_animal(principal):
+def abrir_formulario_animal(principal, usuario):
     if ventana_abierta(principal, "ventana_registro_animal"):
         return
 
@@ -705,19 +866,20 @@ def abrir_formulario_animal(principal):
         if datos["origen"] == "Criado en la granja" and not datos["procedencia"]:
             datos["procedencia"] = "Granja propia"
 
-        animales = cargar_animales()
+        animales = cargar_animales_usuario(usuario)
         if any(str(animal.get("identificacion", "")).strip().lower() == datos["identificacion"].lower() for animal in animales):
             return mostrar_error("Ya existe un animal con esa identificación o arete.")
 
-        ids = [animal.get("id") for animal in animales if isinstance(animal.get("id"), int)]
+        ids = [animal.get("id") for animal in cargar_animales() if isinstance(animal.get("id"), int)]
         datos["id"] = max(ids, default=0) + 1
+        datos["usuario"] = usuario
         datos["fecha_nacimiento"] = nacimiento.isoformat()
         datos["fecha_ingreso"] = ingreso.isoformat()
         datos["peso"] = peso
 
         animales.append(datos)
         try:
-            guardar_animales(animales)
+            guardar_animales_usuario(animales, usuario)
         except OSError as error:
             return mostrar_error(f"No se pudo guardar el animal: {error}")
 
@@ -764,7 +926,7 @@ def abrir_formulario_animal(principal):
     formulario.focus_force()
 
 # --- Catálogo de animales con filtros ---
-def abrir_catalogo(principal):
+def abrir_catalogo(principal, usuario):
     if ventana_abierta(principal, "ventana_catalogo"):
         return
 
@@ -789,7 +951,7 @@ def abrir_catalogo(principal):
     fila_busqueda = ctk.CTkFrame(izquierdo, fg_color="transparent")
     fila_busqueda.pack(fill="x", padx=16)
 
-    entry_busqueda = entrada(fila_busqueda, "Nombre o arete", alto=38)
+    entry_busqueda = entrada(fila_busqueda, "Nombre, arete o terreno", alto=38)
     entry_busqueda.pack(side="left", fill="x", expand=True, padx=(0, 8))
     boton(fila_busqueda, "Buscar", lambda: actualizar_lista(), "primario", ancho=84, alto=38, tam=12).pack(side="left")
     entry_busqueda.bind("<Return>", lambda event: actualizar_lista())
@@ -832,7 +994,7 @@ def abrir_catalogo(principal):
     estilo.configure("Animales.Treeview", background=COLOR_TARJETA, foreground=COLOR_TEXTO, fieldbackground=COLOR_TARJETA, rowheight=34, font=(FUENTE, 11), borderwidth=0)
     estilo.configure("Animales.Treeview.Heading", font=(FUENTE, 11, "bold"), background=COLOR_SUAVE, foreground=COLOR_TEXTO, borderwidth=0, padding=(8, 6))
 
-    columnas = [("identificacion", "Arete", 110), ("nombre", "Nombre", 130), ("raza", "Raza", 110), ("sexo", "Sexo", 80), ("peso", "Peso (kg)", 90), ("origen", "Origen", 160)]
+    columnas = [("identificacion", "Arete", 110), ("nombre", "Nombre", 130), ("raza", "Raza", 110), ("sexo", "Sexo", 80), ("peso", "Peso (kg)", 90), ("origen", "Origen", 160), ("terreno", "Terreno", 150)]
 
     tabla = ttk.Treeview(marco_tabla, columns=[columna[0] for columna in columnas], show="headings", style="Animales.Treeview")
     for clave, titulo, ancho in columnas:
@@ -854,9 +1016,10 @@ def abrir_catalogo(principal):
 
     def actualizar_lista():
         nonlocal animales_filtrados, total_actual
-        todos = cargar_animales()
+        todos = cargar_animales_usuario(usuario)
+        nombres_terreno = nombres_terreno_por_animal(usuario)
         total_actual = len(todos)
-        animales_filtrados = filtrar_animales(todos, filtros, entry_busqueda.get())
+        animales_filtrados = filtrar_animales(todos, filtros, entry_busqueda.get(), nombres_terreno)
 
         filas = tabla.get_children()
         if filas:
@@ -869,6 +1032,7 @@ def abrir_catalogo(principal):
                 animal.get("sexo", ""),
                 formatear_peso(animal.get("peso")),
                 animal.get("origen", ""),
+                nombres_terreno.get(animal.get("id"), ""),
             ))
 
         actualizar_contador()
@@ -956,7 +1120,7 @@ def abrir_catalogo(principal):
         for hijo in panel_valores.winfo_children():
             hijo.destroy()
 
-        valores = valores_categoria(cargar_animales(), categoria)
+        valores = valores_categoria(cargar_animales_usuario(usuario), categoria, nombres_terreno_por_animal(usuario))
         elegido = filtros[categoria]
 
         boton(panel_valores, "Todos", lambda: aplicar_valor(None), "primario" if elegido is None else "suave", alto=30, tam=12).pack(fill="x", padx=4, pady=2)
@@ -1014,43 +1178,530 @@ def abrir_catalogo(principal):
     actualizar_lista()
     catalogo.focus_force()
 
+# --- Terrenos ---
+def abrir_terrenos(principal, usuario):
+    if ventana_abierta(principal, "ventana_terrenos"):
+        return
+
+    terrenos_ventana = nueva_ventana(principal, "Terrenos", 1360, 840)
+
+    panel = tarjeta(terrenos_ventana)
+    panel.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.94, relheight=0.9)
+
+    cabecera = ctk.CTkFrame(panel, fg_color="transparent")
+    cabecera.pack(fill="x", padx=32, pady=(24, 12))
+    etiqueta(cabecera, "Terrenos", 28, COLOR_TEXTO, negrita=True).pack(side="left")
+    boton(cabecera, "Volver", lambda: cerrar(), "texto", ancho=100, alto=34, tam=12).pack(side="right")
+
+    marco = ctk.CTkScrollableFrame(panel, fg_color=COLOR_TARJETA, bg_color=COLOR_TARJETA, corner_radius=0, scrollbar_button_color=COLOR_BORDE, scrollbar_button_hover_color=COLOR_PRIMARIO)
+    marco.pack(fill="both", expand=True, padx=24, pady=(0, 24))
+    for columna in range(4):
+        marco.grid_columnconfigure(columna, weight=1)
+
+    def abrir_detalle(terreno=None):
+        if ventana_abierta(terrenos_ventana, "ventana_terreno_detalle"):
+            return
+        detalle = abrir_terreno_detalle(terrenos_ventana, usuario, terreno, recargar)
+        terrenos_ventana.ventana_terreno_detalle = detalle
+
+    def cerrar():
+        try:
+            terrenos_ventana.destroy()
+        except Exception:
+            pass
+        principal.ventana_terrenos = None
+
+    def recargar():
+        for hijo in marco.winfo_children():
+            hijo.destroy()
+        boton(marco, "+\n\nCrear terreno", lambda: abrir_detalle(), "primario", ancho=220, alto=150, tam=15).grid(row=0, column=0, padx=12, pady=12, sticky="n")
+        for indice, terreno in enumerate(cargar_terrenos_usuario(usuario), start=1):
+            hectareas = terreno.get("hectareas", "")
+            try:
+                texto_hectareas = f"{float(hectareas):g}"
+            except (TypeError, ValueError):
+                texto_hectareas = str(hectareas)
+            texto = f"{terreno.get('nombre', '')}\n{texto_hectareas} hectáreas"
+            boton(marco, texto, lambda t=terreno: abrir_detalle(t), "suave", ancho=220, alto=150, tam=15).grid(row=indice // 4, column=indice % 4, padx=12, pady=12, sticky="n")
+
+    terrenos_ventana.protocol("WM_DELETE_WINDOW", cerrar)
+    principal.ventana_terrenos = terrenos_ventana
+    terrenos_ventana.recargar = recargar
+    terrenos_ventana.abrir_detalle = abrir_detalle
+    recargar()
+    terrenos_ventana.focus_force()
+    return terrenos_ventana
+
+def abrir_terreno_detalle(padre, usuario, terreno=None, al_guardar=None):
+    titulo = "Crear terreno" if terreno is None else f"Terreno - {terreno.get('nombre', '')}"
+    detalle = nueva_ventana(padre, titulo, 1280, 840)
+
+    panel = tarjeta(detalle)
+    panel.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.94, relheight=0.92)
+    panel.grid_columnconfigure(0, weight=1)
+    panel.grid_rowconfigure(1, weight=1)
+
+    cabecera = ctk.CTkFrame(panel, fg_color="transparent")
+    cabecera.grid(row=0, column=0, sticky="ew", padx=32, pady=(24, 12))
+    etiqueta(cabecera, titulo, 28, COLOR_TEXTO, negrita=True).pack(anchor="w")
+
+    marco = ctk.CTkScrollableFrame(panel, fg_color=COLOR_TARJETA, bg_color=COLOR_TARJETA, corner_radius=0, scrollbar_button_color=COLOR_BORDE, scrollbar_button_hover_color=COLOR_PRIMARIO)
+    marco.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0, 10))
+
+    datos = ctk.CTkFrame(marco, fg_color="transparent")
+    datos.pack(fill="x", padx=12, pady=(6, 10))
+    etiqueta(datos, "Nombre del terreno *", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x")
+    entry_nombre = entrada(datos, "Ej: Terreno Norte")
+    entry_nombre.pack(fill="x", pady=(4, 12))
+    etiqueta(datos, "Cantidad de hectáreas *", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x")
+    entry_hectareas = entrada(datos, "Ej: 12,5")
+    entry_hectareas.pack(fill="x", pady=(4, 0))
+    if terreno is not None:
+        entry_nombre.insert(0, terreno.get("nombre", ""))
+        entry_hectareas.insert(0, str(terreno.get("hectareas", "")))
+
+    estilo = ttk.Style()
+    estilo.configure("Animales.Treeview", background=COLOR_TARJETA, foreground=COLOR_TEXTO, fieldbackground=COLOR_TARJETA, rowheight=30, font=(FUENTE, 11), borderwidth=0)
+    estilo.configure("Animales.Treeview.Heading", font=(FUENTE, 11, "bold"), background=COLOR_SUAVE, foreground=COLOR_TEXTO, borderwidth=0, padding=(8, 6))
+
+    def actualizar_casillas(tabla):
+        seleccionados = set(tabla.selection())
+        for fila in tabla.get_children():
+            tabla.set(fila, "sel", "☑" if fila in seleccionados else "☐")
+
+    def llenar(tabla, animales_lista):
+        seleccionados = set(tabla.selection())
+        for fila in tabla.get_children():
+            tabla.delete(fila)
+        for animal in animales_lista:
+            tabla.insert("", "end", iid=str(animal.get("id")), values=(
+                "☐",
+                animal.get("identificacion", ""),
+                animal.get("nombre", ""),
+                animal.get("raza", ""),
+                animal.get("sexo", ""),
+            ))
+        for fila in seleccionados:
+            if tabla.exists(fila):
+                tabla.selection_add(fila)
+        actualizar_casillas(tabla)
+
+    def alternar_casilla(event):
+        tabla = event.widget
+        if tabla.identify_column(event.x) != "#1":
+            return
+        fila = tabla.identify_row(event.y)
+        if not fila:
+            return
+        if fila in tabla.selection():
+            tabla.selection_remove(fila)
+        else:
+            tabla.selection_add(fila)
+        tabla.focus_set()
+        actualizar_casillas(tabla)
+        return "break"
+
+    def crear_lista(titulo_lista, animales_lista):
+        contenedor = ctk.CTkFrame(marco, fg_color=COLOR_TARJETA, corner_radius=14, border_width=1, border_color=COLOR_BORDE)
+        contenedor.pack(fill="x", padx=12, pady=10)
+        etiqueta(contenedor, titulo_lista, 13, COLOR_TEXTO, negrita=True).pack(anchor="w", padx=12, pady=(10, 4))
+        tabla = ttk.Treeview(contenedor, columns=("sel", "arete", "nombre", "raza", "sexo"), show="headings", selectmode="extended", style="Animales.Treeview", height=6)
+        for clave, texto_columna, ancho_columna in (("sel", "", 38), ("arete", "Arete", 130), ("nombre", "Nombre", 150), ("raza", "Raza", 130), ("sexo", "Sexo", 90)):
+            tabla.heading(clave, text=texto_columna)
+            tabla.column(clave, width=ancho_columna, anchor="center" if clave == "sel" else "w", stretch=clave != "sel")
+        tabla.bind("<Button-1>", alternar_casilla)
+        tabla.bind("<<TreeviewSelect>>", lambda event: actualizar_casillas(event.widget))
+        barra = ttk.Scrollbar(contenedor, orient="vertical", command=tabla.yview)
+        tabla.configure(yscrollcommand=barra.set)
+        tabla.pack(side="left", fill="both", expand=True, padx=(12, 0), pady=(0, 12))
+        barra.pack(side="right", fill="y", pady=(0, 12))
+        llenar(tabla, animales_lista)
+        return tabla
+
+    animales = cargar_animales_usuario(usuario)
+    por_id = {animal.get("id"): animal for animal in animales if isinstance(animal.get("id"), int)}
+    id_actual = terreno.get("id") if terreno is not None else None
+
+    asignados_ids = []
+    if terreno is not None:
+        for valor in terreno.get("animales") or []:
+            try:
+                ident = int(valor)
+            except (TypeError, ValueError):
+                continue
+            if ident in por_id:
+                asignados_ids.append(ident)
+    asignados_ids = list(dict.fromkeys(asignados_ids))
+
+    ids_ocupados = ids_en_terrenos(cargar_terrenos_usuario(usuario), excluir=id_actual)
+    asignados = [por_id[ident] for ident in asignados_ids]
+    disponibles = [animal for animal in animales if animal.get("id") not in asignados_ids and animal.get("id") not in ids_ocupados]
+
+    tabla_asignados = None
+    if terreno is not None:
+        etiqueta(marco, "Animales que ya pertenecen al terreno", 14, COLOR_TEXTO, negrita=True).pack(anchor="w", padx=12, pady=(12, 0))
+        tabla_asignados = crear_lista("Asignados", asignados)
+        boton(marco, "Quitar seleccionados", lambda: quitar(), "suave", ancho=180, alto=36, tam=12).pack(anchor="e", padx=12, pady=(0, 6))
+        etiqueta(marco, "Animales disponibles para agregar", 14, COLOR_TEXTO, negrita=True).pack(anchor="w", padx=12, pady=(12, 0))
+        tabla_disponibles = crear_lista("Disponibles", disponibles)
+        boton(marco, "Agregar seleccionados", lambda: agregar(), "primario", ancho=180, alto=36, tam=12).pack(anchor="e", padx=12, pady=(0, 6))
+    else:
+        etiqueta(marco, "Animales disponibles", 14, COLOR_TEXTO, negrita=True).pack(anchor="w", padx=12, pady=(12, 0))
+        tabla_disponibles = crear_lista("Disponibles", disponibles)
+
+    def refrescar_listas():
+        if tabla_asignados is not None:
+            llenar(tabla_asignados, asignados)
+        llenar(tabla_disponibles, disponibles)
+
+    def quitar():
+        for iid in list(tabla_asignados.selection()):
+            try:
+                ident = int(iid)
+            except ValueError:
+                continue
+            animal = por_id.get(ident)
+            asignados[:] = [item for item in asignados if item.get("id") != ident]
+            if animal is not None and ident not in ids_ocupados and all(item.get("id") != ident for item in disponibles):
+                disponibles.append(animal)
+        refrescar_listas()
+
+    def agregar():
+        for iid in list(tabla_disponibles.selection()):
+            try:
+                ident = int(iid)
+            except ValueError:
+                continue
+            animal = por_id.get(ident)
+            disponibles[:] = [item for item in disponibles if item.get("id") != ident]
+            if animal is not None and all(item.get("id") != ident for item in asignados):
+                asignados.append(animal)
+        refrescar_listas()
+
+    pie = ctk.CTkFrame(panel, fg_color="transparent")
+    pie.grid(row=2, column=0, sticky="ew", padx=32, pady=(0, 22))
+    mensaje = etiqueta(pie, "", 12, COLOR_PELIGRO, anchor="w", wraplength=620, justify="left")
+    mensaje.pack(side="left", fill="x", expand=True)
+    boton(pie, "Guardar y salir", lambda: guardar(), "primario", ancho=170, alto=42).pack(side="right")
+    boton(pie, "Volver", lambda: cerrar(), "suave", ancho=120, alto=42).pack(side="right", padx=(10, 0))
+
+    def mostrar_error(texto):
+        mensaje.configure(text=texto, text_color=COLOR_PELIGRO)
+
+    def guardar():
+        nombre = entry_nombre.get().strip()
+        texto_hectareas = entry_hectareas.get().strip().replace(",", ".")
+        if not nombre:
+            return mostrar_error("El nombre del terreno es obligatorio.")
+        try:
+            hectareas = float(texto_hectareas)
+        except ValueError:
+            return mostrar_error("Las hectáreas deben ser un número. Ejemplo: 12 o 12,5.")
+        if not math.isfinite(hectareas) or hectareas <= 0:
+            return mostrar_error("Las hectáreas deben ser mayores que cero.")
+
+        if tabla_asignados is not None:
+            ids_finales = [animal.get("id") for animal in asignados]
+        else:
+            ids_finales = []
+            for iid in tabla_disponibles.selection():
+                try:
+                    ident = int(iid)
+                except ValueError:
+                    continue
+                if ident in por_id and ident not in ids_finales:
+                    ids_finales.append(ident)
+
+        ocupados = ids_en_terrenos(cargar_terrenos_usuario(usuario), excluir=id_actual)
+        if any(ident in ocupados for ident in ids_finales):
+            return mostrar_error("Uno o más animales ya pertenecen a otro terreno.")
+
+        terrenos = cargar_terrenos_usuario(usuario)
+        if terreno is None:
+            ids = [item.get("id") for item in cargar_terrenos() if isinstance(item.get("id"), int)]
+            registro = {
+                "id": max(ids, default=0) + 1,
+                "usuario": usuario,
+                "nombre": nombre,
+                "hectareas": hectareas,
+                "animales": ids_finales,
+            }
+            terrenos.append(registro)
+        else:
+            for registro in terrenos:
+                if registro.get("id") == id_actual:
+                    registro["nombre"] = nombre
+                    registro["hectareas"] = hectareas
+                    registro["animales"] = ids_finales
+                    break
+        try:
+            guardar_terrenos_usuario(terrenos, usuario)
+        except OSError as error:
+            return mostrar_error(f"No se pudo guardar el terreno: {error}")
+        cerrar(guardado=True)
+
+    def cerrar(guardado=False):
+        try:
+            detalle.destroy()
+        except Exception:
+            pass
+        padre.ventana_terreno_detalle = None
+        if guardado and al_guardar is not None:
+            al_guardar()
+
+    detalle.protocol("WM_DELETE_WINDOW", lambda: cerrar())
+    detalle.entry_nombre = entry_nombre
+    detalle.entry_hectareas = entry_hectareas
+    detalle.tabla_asignados = tabla_asignados
+    detalle.tabla_disponibles = tabla_disponibles
+    detalle.guardar = guardar
+    detalle.quitar = quitar
+    detalle.agregar = agregar
+    detalle.recargar_listas = refrescar_listas
+    detalle.mensaje = mensaje
+    detalle.focus_force()
+    return detalle
+
 # --- Facturación ---
-def abrir_facturacion(principal):
+def abrir_facturacion(principal, usuario):
     if ventana_abierta(principal, "ventana_factura"):
         return
 
-    factura = nueva_ventana(principal, "Generar factura", 1080, 740)
+    factura = nueva_ventana(principal, "Generar factura", 1280, 860)
+    factura.minsize(1080, 700)
 
     panel = tarjeta(factura)
-    panel.place(relx=0.5, rely=0.5, anchor="center")
-    fijar_ancho(panel, 500)
+    panel.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.94, relheight=0.94)
+    panel.grid_columnconfigure(0, weight=0, minsize=400)
+    panel.grid_columnconfigure(1, weight=1)
+    panel.grid_rowconfigure(0, weight=1)
 
-    etiqueta(panel, "Generar factura", 28, COLOR_TEXTO, negrita=True).pack(pady=(22, 2))
-    etiqueta(panel, "Datos de la venta de bovinos.", 13, COLOR_SECUNDARIO).pack(pady=(0, 12))
+    izquierdo = ctk.CTkScrollableFrame(panel, fg_color="transparent", scrollbar_button_color=COLOR_BORDE, scrollbar_button_hover_color=COLOR_PRIMARIO)
+    izquierdo.grid(row=0, column=0, sticky="nsew", padx=(28, 14), pady=22)
 
-    etiqueta(panel, "Granja", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x", padx=54)
-    entry_granja = entrada(panel, "Nombre de la granja")
-    entry_granja.pack(fill="x", padx=54, pady=(3, 10))
+    derecho = ctk.CTkFrame(panel, fg_color=COLOR_SUAVE, corner_radius=16)
+    derecho.grid(row=0, column=1, sticky="nsew", padx=(14, 28), pady=22)
+    derecho.grid_columnconfigure(0, weight=1)
+    derecho.grid_rowconfigure(2, weight=1)
 
-    etiqueta(panel, "Comprador", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x", padx=54)
-    entry_comprador = entrada(panel, "Nombre del comprador")
-    entry_comprador.pack(fill="x", padx=54, pady=(3, 10))
+    etiqueta(izquierdo, "Generar factura", 28, COLOR_TEXTO, negrita=True).pack(pady=(2, 2))
+    etiqueta(izquierdo, "Elige los animales que se venden.", 13, COLOR_SECUNDARIO).pack(pady=(0, 12))
 
-    etiqueta(panel, "Fecha", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x", padx=54)
-    entry_fecha = entrada(panel, "AAAA-MM-DD")
-    entry_fecha.pack(fill="x", padx=54, pady=(3, 10))
+    etiqueta(izquierdo, "Granja", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x")
+    entry_granja = entrada(izquierdo, "Nombre de la granja")
+    entry_granja.pack(fill="x", pady=(3, 9))
+
+    etiqueta(izquierdo, "Comprador", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x")
+    entry_comprador = entrada(izquierdo, "Nombre del comprador")
+    entry_comprador.pack(fill="x", pady=(3, 9))
+
+    etiqueta(izquierdo, "Fecha", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x")
+    entry_fecha = entrada(izquierdo, "AAAA-MM-DD")
+    entry_fecha.pack(fill="x", pady=(3, 9))
     entry_fecha.insert(0, date.today().isoformat())
 
-    etiqueta(panel, "Número de vacas", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x", padx=54)
-    entry_vacas = entrada(panel, "Ej: 5")
-    entry_vacas.pack(fill="x", padx=54, pady=(3, 10))
+    etiqueta(izquierdo, "Precio por kilo", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x")
+    entry_precio = entrada(izquierdo, "Ej: 12000")
+    entry_precio.pack(fill="x", pady=(3, 9))
 
-    etiqueta(panel, "Precio por libra", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x", padx=54)
-    entry_precio = entrada(panel, "Ej: 12000")
-    entry_precio.pack(fill="x", padx=54, pady=(3, 10))
+    resumen = ctk.CTkFrame(izquierdo, fg_color=COLOR_SUAVE, corner_radius=14)
+    resumen.pack(fill="x", pady=(5, 8))
 
-    mensaje = etiqueta(panel, "", 12, COLOR_PELIGRO, wraplength=386, justify="left")
-    mensaje.pack(fill="x", padx=54, pady=(0, 6))
+    def fila_resumen(titulo):
+        fila = ctk.CTkFrame(resumen, fg_color="transparent")
+        fila.pack(fill="x", padx=16, pady=2)
+        etiqueta(fila, titulo, 11, COLOR_SECUNDARIO, anchor="w").pack(side="left")
+        valor = etiqueta(fila, "—", 13, COLOR_TEXTO, negrita=True, anchor="e")
+        valor.pack(side="right")
+        return valor
+
+    label_vacas = fila_resumen("Animales seleccionados")
+    label_peso = fila_resumen("Peso total")
+    label_total = fila_resumen("Total a pagar")
+
+    mensaje = etiqueta(izquierdo, "", 12, COLOR_PELIGRO, wraplength=386, justify="left")
+    mensaje.pack(fill="x", pady=(2, 6))
+
+    etiqueta(izquierdo, "Filtrar por", 12, COLOR_SECUNDARIO, anchor="w").pack(fill="x")
+    marco_categorias = ctk.CTkFrame(izquierdo, fg_color="transparent")
+    marco_categorias.pack(fill="x", padx=4)
+    marco_categorias.grid_columnconfigure(0, weight=1)
+    marco_categorias.grid_columnconfigure(1, weight=1)
+
+    botones_categoria = {}
+    for indice, (clave, titulo) in enumerate(CAMPOS_FILTRO):
+        boton_cat = boton(marco_categorias, titulo, lambda c=clave: seleccionar_categoria(c), "suave", alto=32, tam=12)
+        boton_cat.grid(row=indice // 2, column=indice % 2, padx=5, pady=5, sticky="ew")
+        botones_categoria[clave] = boton_cat
+
+    panel_valores = ctk.CTkScrollableFrame(izquierdo, height=120, fg_color=COLOR_TARJETA, corner_radius=12, scrollbar_button_color=COLOR_BORDE, scrollbar_button_hover_color=COLOR_PRIMARIO)
+    panel_valores.pack(fill="x", padx=4, pady=(0, 8))
+    boton(izquierdo, "Limpiar filtros", lambda: limpiar_filtros(), "suave", alto=34, tam=12).pack(fill="x", padx=4)
+    boton(izquierdo, "Generar factura", lambda: generar(), "primario").pack(fill="x", pady=(10, 4))
+
+    cabecera = ctk.CTkFrame(derecho, fg_color="transparent")
+    cabecera.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 4))
+    etiqueta(cabecera, "Animales disponibles", 16, COLOR_TEXTO, negrita=True).pack(side="left")
+    contador_lista = etiqueta(cabecera, "", 12, COLOR_SECUNDARIO)
+    contador_lista.pack(side="right")
+
+    fila_busqueda = ctk.CTkFrame(derecho, fg_color="transparent")
+    fila_busqueda.grid(row=1, column=0, sticky="ew", padx=18, pady=(4, 8))
+    entry_busqueda = entrada(fila_busqueda, "Arete, nombre o terreno", alto=38)
+    entry_busqueda.pack(side="left", fill="x", expand=True, padx=(0, 8))
+    boton(fila_busqueda, "Todos", lambda: seleccionar_todos(), "suave", ancho=76, alto=38, tam=12).pack(side="left")
+    boton(fila_busqueda, "Limpiar", lambda: limpiar_seleccion(), "suave", ancho=76, alto=38, tam=12).pack(side="left", padx=(8, 0))
+
+    lista_animales = ctk.CTkScrollableFrame(derecho, fg_color=COLOR_TARJETA, corner_radius=12, scrollbar_button_color=COLOR_BORDE, scrollbar_button_hover_color=COLOR_PRIMARIO)
+    lista_animales.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 16))
+
+    filtros = {clave: None for clave, _ in CAMPOS_FILTRO}
+    categoria_actual = None
+    todos_usuario = []
+    visibles_actuales = []
+    seleccion = set()
+    variables_visibles = {}
+
+    def clave_animal(animal):
+        return str(animal.get("id") or animal.get("identificacion") or "")
+
+    def es_activo(animal):
+        return str(animal.get("estado") or "").strip().casefold() == "activo"
+
+    def mostrar_error(texto):
+        mensaje.configure(text=texto, text_color=COLOR_PELIGRO)
+
+    def ocultar_mensaje(evento=None):
+        mensaje.configure(text="")
+
+    def recargar_datos():
+        nonlocal todos_usuario
+        todos_usuario = cargar_animales_usuario(usuario)
+        seleccion.intersection_update(clave_animal(animal) for animal in todos_usuario)
+
+    def lista_filtrada():
+        nombres = nombres_terreno_por_animal(usuario)
+        filtrados = filtrar_animales(todos_usuario, filtros, entry_busqueda.get(), nombres)
+        return [animal for animal in filtrados if es_activo(animal)]
+
+    def actualizar_resumen():
+        elegidos = [animal for animal in todos_usuario if clave_animal(animal) in seleccion and es_activo(animal)]
+        totales = calcular_totales(elegidos, 0)
+        label_vacas.configure(text=str(len(elegidos)))
+        label_peso.configure(text=f"{formatear_numero(totales['peso_kg'])} kg" if elegidos else "—")
+        precio_texto = entry_precio.get().strip().replace(",", ".")
+        try:
+            precio = float(precio_texto)
+        except (TypeError, ValueError):
+            precio = None
+        if elegidos and precio is not None and math.isfinite(precio) and precio > 0:
+            label_total.configure(text=formatear_moneda(calcular_totales(elegidos, precio)["total"]))
+        else:
+            label_total.configure(text="—")
+
+    def alternar(clave, variable):
+        if variable.get():
+            seleccion.add(clave)
+        else:
+            seleccion.discard(clave)
+        actualizar_resumen()
+
+    def reconstruir_lista():
+        nonlocal visibles_actuales
+        variables_visibles.clear()
+        for hijo in lista_animales.winfo_children():
+            hijo.destroy()
+        visibles_actuales = lista_filtrada()
+        visibles_actuales.sort(key=lambda animal: (
+            str(animal.get("identificacion") or "").casefold(),
+            str(animal.get("nombre") or "").casefold(),
+        ))
+        for animal in visibles_actuales:
+            clave = clave_animal(animal)
+            peso = peso_valido(animal.get("peso"))
+            detalle = f"{animal.get('identificacion') or 'Sin arete'} · {animal.get('nombre') or 'Sin nombre'}"
+            detalle += f" · {formatear_numero(peso)} kg" if peso is not None else " · sin peso válido"
+            variable = ctk.BooleanVar(value=clave in seleccion)
+            casilla = ctk.CTkCheckBox(
+                lista_animales, text=detalle, variable=variable,
+                command=lambda c=clave, v=variable: alternar(c, v),
+                font=(FUENTE, 12), text_color=COLOR_TEXTO,
+                fg_color=COLOR_PRIMARIO, hover_color=COLOR_PRIMARIO_HOVER,
+                border_color=COLOR_BORDE, checkbox_width=22, checkbox_height=22, corner_radius=6,
+            )
+            casilla.pack(fill="x", padx=10, pady=4, anchor="w")
+            variables_visibles[clave] = variable
+
+        contador_lista.configure(text=f"{len(visibles_actuales)} de {len(todos_usuario)} animales")
+        if not visibles_actuales:
+            aviso = "No hay animales activos registrados." if not todos_usuario else "Ningún animal coincide con los filtros."
+            etiqueta(lista_animales, aviso, 12, COLOR_SECUNDARIO).pack(pady=24)
+        actualizar_resumen()
+
+    def recargar_lista():
+        recargar_datos()
+        reconstruir_lista()
+
+    def seleccionar_todos():
+        for clave, variable in variables_visibles.items():
+            seleccion.add(clave)
+            variable.set(True)
+        actualizar_resumen()
+
+    def limpiar_seleccion():
+        seleccion.clear()
+        for variable in variables_visibles.values():
+            variable.set(False)
+        actualizar_resumen()
+
+    def marcar_animales(identificaciones):
+        buscadas = {str(identificacion).strip().casefold() for identificacion in identificaciones}
+        for animal in todos_usuario:
+            if str(animal.get("identificacion") or "").strip().casefold() in buscadas:
+                seleccion.add(clave_animal(animal))
+        for clave, variable in variables_visibles.items():
+            variable.set(clave in seleccion)
+        actualizar_resumen()
+
+    def aplicar_valor(valor):
+        if categoria_actual is None:
+            return
+        filtros[categoria_actual] = valor
+        reconstruir_lista()
+        seleccionar_categoria(categoria_actual)
+
+    def seleccionar_categoria(categoria):
+        nonlocal categoria_actual
+        categoria_actual = categoria
+
+        for clave, boton_cat in botones_categoria.items():
+            activo = clave == categoria
+            boton_cat.configure(fg_color=COLOR_PRIMARIO if activo else COLOR_SUAVE, hover_color=COLOR_PRIMARIO_HOVER if activo else COLOR_BORDE, text_color="white" if activo else COLOR_TEXTO)
+
+        for hijo in panel_valores.winfo_children():
+            hijo.destroy()
+
+        nombres = nombres_terreno_por_animal(usuario)
+        valores = valores_categoria(todos_usuario, categoria, nombres)
+        elegido = filtros[categoria]
+
+        boton(panel_valores, "Todos", lambda: aplicar_valor(None), "primario" if elegido is None else "suave", alto=30, tam=12).pack(fill="x", padx=4, pady=2)
+        for valor in valores:
+            boton(panel_valores, valor, lambda v=valor: aplicar_valor(v), "primario" if elegido == valor else "suave", alto=30, tam=12).pack(fill="x", padx=4, pady=2)
+        if not valores:
+            etiqueta(panel_valores, "Sin valores registrados", 12, COLOR_SECUNDARIO).pack(pady=12)
+
+    def limpiar_filtros():
+        nonlocal categoria_actual
+        for clave in filtros:
+            filtros[clave] = None
+        entry_busqueda.delete(0, "end")
+        categoria_actual = None
+        for boton_cat in botones_categoria.values():
+            boton_cat.configure(fg_color=COLOR_SUAVE, hover_color=COLOR_BORDE, text_color=COLOR_TEXTO)
+        for hijo in panel_valores.winfo_children():
+            hijo.destroy()
+        reconstruir_lista()
 
     def abrir_vista_factura(texto):
         if ventana_abierta(principal, "ventana_factura_vista"):
@@ -1062,10 +1713,10 @@ def abrir_facturacion(principal):
         panel_vista = tarjeta(vista)
         panel_vista.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.92, relheight=0.9)
 
-        cabecera = ctk.CTkFrame(panel_vista, fg_color="transparent")
-        cabecera.pack(fill="x", padx=28, pady=(22, 12))
-        etiqueta(cabecera, "Factura", 24, COLOR_TEXTO, negrita=True).pack(side="left")
-        etiqueta(cabecera, f"Archivo: {RUTA_FACTURA.name}", 12, COLOR_SECUNDARIO).pack(side="right")
+        cabecera_vista = ctk.CTkFrame(panel_vista, fg_color="transparent")
+        cabecera_vista.pack(fill="x", padx=28, pady=(22, 12))
+        etiqueta(cabecera_vista, "Factura", 24, COLOR_TEXTO, negrita=True).pack(side="left")
+        etiqueta(cabecera_vista, f"Archivo: {RUTA_FACTURA.name}", 12, COLOR_SECUNDARIO).pack(side="right")
 
         caja = ctk.CTkTextbox(panel_vista, font=("Consolas", 12), wrap="none", corner_radius=14, border_width=1, border_color=COLOR_BORDE, fg_color="white")
         caja.pack(fill="both", expand=True, padx=28, pady=(0, 14))
@@ -1087,10 +1738,13 @@ def abrir_facturacion(principal):
             principal.ventana_factura_vista = None
 
         def abrir_archivo():
+            if not RUTA_FACTURA.exists():
+                mensaje.configure(text=f"No existe el archivo {RUTA_FACTURA.name}. Genera la factura primero.", text_color=COLOR_PELIGRO)
+                return
             try:
                 os.startfile(RUTA_FACTURA)
-            except Exception:
-                pass
+            except Exception as error:
+                mensaje.configure(text=f"No se pudo abrir {RUTA_FACTURA.name}: {error}", text_color=COLOR_PELIGRO)
 
         boton(pie, "Cerrar", lambda: cerrar_vista(), "primario", ancho=120, alto=38, tam=13).pack(side="right")
         boton(pie, "Abrir archivo", lambda: abrir_archivo(), "suave", ancho=140, alto=38, tam=13).pack(side="right", padx=(0, 8))
@@ -1103,40 +1757,82 @@ def abrir_facturacion(principal):
         mostrar_factura(texto)
         vista.focus_force()
 
-    def mostrar_error(texto):
-        mensaje.configure(text=texto, text_color=COLOR_PELIGRO)
+    def refrescar_catalogo():
+        catalogo = getattr(principal, "ventana_catalogo", None)
+        if catalogo is not None:
+            try:
+                if catalogo.winfo_exists():
+                    catalogo.recargar()
+            except Exception:
+                pass
 
     def generar():
         granja = entry_granja.get().strip()
         comprador = entry_comprador.get().strip()
         fecha_texto = entry_fecha.get().strip()
-        vacas_texto = entry_vacas.get().strip()
         precio_texto = entry_precio.get().strip().replace(",", ".")
 
-        if not granja or not comprador or not vacas_texto or not precio_texto:
-            return mostrar_error("Llena todos los campos.")
+        if not granja or not comprador or not precio_texto:
+            return mostrar_error("Llena granja, comprador y precio por kilo.")
 
         fecha = validar_fecha(fecha_texto)
         if fecha is None:
             return mostrar_error("La fecha debe tener el formato AAAA-MM-DD.")
-
         try:
-            vacas = int(vacas_texto)
             precio = float(precio_texto)
         except ValueError:
-            return mostrar_error("Las vacas deben ser un entero y el precio un número.")
+            return mostrar_error("El precio por kilo debe ser un número válido.")
+        if not math.isfinite(precio) or precio <= 0:
+            return mostrar_error("El precio por kilo debe ser mayor que cero.")
+        if not seleccion:
+            return mostrar_error("Selecciona al menos un animal para vender.")
 
-        if not math.isfinite(precio):
-            return mostrar_error("El precio debe ser un número válido.")
-        if vacas <= 0 or precio <= 0:
-            return mostrar_error("Las vacas y el precio deben ser mayores que cero.")
+        recargar_datos()
+        elegidos = []
+        faltantes = []
+        for animal in todos_usuario:
+            if clave_animal(animal) not in seleccion:
+                continue
+            if es_activo(animal):
+                elegidos.append(animal)
+            else:
+                faltantes.append(str(animal.get("identificacion") or animal.get("nombre") or "sin arete"))
+        if faltantes:
+            reconstruir_lista()
+            return mostrar_error("Estos animales ya no están activos: " + ", ".join(faltantes))
+
+        sin_peso = [
+            str(animal.get("identificacion") or animal.get("nombre") or "sin arete")
+            for animal in elegidos
+            if peso_valido(animal.get("peso")) is None
+        ]
+        if sin_peso:
+            return mostrar_error("Corrige el peso de: " + ", ".join(sin_peso) + ".")
+
+        elegidos.sort(key=clave_animal)
+        totales = calcular_totales(elegidos, precio)
+        if not math.isfinite(totales["total"]) or totales["total"] <= 0:
+            return mostrar_error("El total de la factura no es válido. Revisa pesos y precio.")
+
+        detalle = []
+        for animal in elegidos:
+            peso = peso_valido(animal.get("peso"))
+            detalle.append({
+                "Identificacion": str(animal.get("identificacion") or ""),
+                "Nombre": str(animal.get("nombre") or ""),
+                "Peso_kg": round(peso, 2),
+                "Subtotal": round(peso * precio, 2),
+            })
 
         datos = {
             "Granja": granja,
             "Comprador": comprador,
             "Fecha": fecha.isoformat(),
-            "VACAS": vacas,
-            "Precio_por_libra": precio,
+            "Animales": detalle,
+            "Total_vacas": len(elegidos),
+            "Peso_total_kg": round(totales["peso_kg"], 2),
+            "Precio_por_kilo": precio,
+            "Total": round(totales["total"], 2),
         }
 
         inicio = "# ==========================================\n#   Facturacion Electronica De Venta\n#   Generado por MiniGan.INC\n#   Correo: MiniGan@outlook.com\n#   PQR: 3**********\n# ==========================================\n"
@@ -1151,6 +1847,18 @@ def abrir_facturacion(principal):
         except OSError as error:
             return mostrar_error(f"No se pudo leer la factura: {error}")
 
+        for animal in elegidos:
+            animal["estado"] = "Vendido"
+
+        try:
+            guardar_animales_usuario(todos_usuario, usuario)
+        except OSError as error:
+            abrir_vista_factura(contenido)
+            return mostrar_error(f"Factura guardada, pero no se pudo marcar como vendidos: {error}")
+
+        seleccion.clear()
+        recargar_lista()
+        refrescar_catalogo()
         abrir_vista_factura(contenido)
         mensaje.configure(text="Factura generada correctamente.", text_color=COLOR_EXITO)
 
@@ -1161,21 +1869,42 @@ def abrir_facturacion(principal):
             pass
         principal.ventana_factura = None
 
-    boton(panel, "Generar factura", lambda: generar(), "primario").pack(fill="x", padx=54)
-    boton(panel, "Volver", lambda: cerrar(), "texto", alto=34).pack(fill="x", padx=54, pady=(4, 14))
+    for campo in (entry_granja, entry_comprador, entry_fecha, entry_precio):
+        campo.bind("<Key>", ocultar_mensaje)
+    entry_precio.bind("<KeyRelease>", lambda evento: actualizar_resumen())
+    entry_busqueda.bind("<KeyRelease>", lambda evento: reconstruir_lista())
+    entry_busqueda.bind("<Return>", lambda evento: reconstruir_lista())
+
+    boton(izquierdo, "Volver", lambda: cerrar(), "texto", alto=34).pack(fill="x", pady=(4, 12))
 
     factura.protocol("WM_DELETE_WINDOW", cerrar)
     principal.ventana_factura = factura
 
-    # Referencias útiles para pruebas.
     factura.entry_granja = entry_granja
     factura.entry_comprador = entry_comprador
     factura.entry_fecha = entry_fecha
-    factura.entry_vacas = entry_vacas
     factura.entry_precio = entry_precio
+    factura.entry_busqueda = entry_busqueda
     factura.mensaje = mensaje
     factura.generar = generar
+    factura.seleccion = seleccion
+    factura.filtros = filtros
+    factura.marcar_animales = marcar_animales
+    factura.seleccionar_todos = seleccionar_todos
+    factura.limpiar_seleccion = limpiar_seleccion
+    factura.actualizar_resumen = actualizar_resumen
+    factura.reconstruir_lista = reconstruir_lista
+    factura.recargar_lista = recargar_lista
+    factura.seleccionar_categoria = seleccionar_categoria
+    factura.aplicar_valor = aplicar_valor
+    factura.limpiar_filtros = limpiar_filtros
+    factura.lista_animales = lista_animales
+    factura.contador_lista = contador_lista
+    factura.label_vacas = label_vacas
+    factura.label_peso = label_peso
+    factura.label_total = label_total
 
+    recargar_lista()
     factura.focus_force()
 
 # --- Acerca de ---
@@ -1189,7 +1918,7 @@ def abrir_acerca(principal):
     panel.place(relx=0.5, rely=0.5, anchor="center")
     fijar_ancho(panel, 580)
 
-    etiqueta(panel, "Métodos Campesinos", 28, COLOR_TEXTO, negrita=True).pack(pady=(42, 2))
+    etiqueta(panel, "MINIGAN", 28, COLOR_TEXTO, negrita=True).pack(pady=(42, 2))
     etiqueta(panel, "Control de ganado", 14, COLOR_SECUNDARIO).pack(pady=(0, 24))
 
     linea = ctk.CTkFrame(panel, height=1, fg_color=COLOR_BORDE)
@@ -1197,10 +1926,16 @@ def abrir_acerca(principal):
 
     informacion = [
         ("Versión", "1.0"),
-        ("Descripción", "Registro, consulta y facturación de bovinos."),
+        ("Descripción", "MINIGAN es un pequeño proyecto en desarrollo para el registro, "
+        "consulta y facturación de bovinos. Busca orientar al sector agropecuario en el control "
+        "de sus granjas bovinas; su interfaz sencilla y su código abierto permiten que cualquier "
+        "persona acceda a estas tecnologías. Con nuevos parches seguiremos actualizando funciones "
+        "para mejorar la aplicación. Muchas gracias."),
         ("Datos", "Se guardan en tu equipo, en Hoja_datos.json."),
-        ("Tecnologías", "Python, CustomTkinter, Pillow y PyYAML."),
-        ("Proyecto", "Programación II"),
+        ("Tecnologías", "Python, CustomTkinter, Pillow, PyYAML y GitHub"),
+        ("Proyecto", "Minigan.org"),
+        ("Contacto", "Minigan@outlook.com"),
+        ("Estudiantes", "Nicolas Delgado\nJonathan Carrillo"),
     ]
 
     cuerpo = ctk.CTkFrame(panel, fg_color="transparent")
